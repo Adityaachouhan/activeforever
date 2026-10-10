@@ -1,0 +1,100 @@
+/* Self-hosted fonts – no external network requests */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/800.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply font-body text-ink-700 bg-ink-50;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display text-ink-900;
+  }
+  ::selection {
+    @apply bg-amber-200 text-ink-900;
+  }
+}
+
+@layer components {
+  .container-px {
+    @apply px-4 sm:px-6 lg:px-8;
+  }
+  .container-max {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-amber-500 text-white px-6 py-3 hover:bg-amber-600 hover:shadow-glow active:scale-95;
+  }
+  .btn-secondary {
+    @apply btn bg-ink-900 text-white px-6 py-3 hover:bg-ink-800 active:scale-95;
+  }
+  .btn-outline {
+    @apply btn border-2 border-ink-200 text-ink-700 px-6 py-3 hover:border-amber-400 hover:text-amber-600 active:scale-95;
+  }
+  .btn-ghost {
+    @apply btn text-ink-600 px-4 py-2 hover:bg-ink-100 hover:text-ink-900;
+  }
+  .card {
+    @apply rounded-2xl bg-white shadow-card transition-all duration-300;
+  }
+  .input-field {
+    @apply w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-ink-900 placeholder:text-ink-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100 transition-colors;
+  }
+  .file-input {
+    @apply w-full rounded-xl border border-dashed border-ink-200 bg-ink-50 px-3 py-2.5 text-sm text-ink-600 shadow-sm transition-colors file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-amber-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white file:shadow-sm file:transition file:hover:bg-amber-600 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100;
+  }
+  .label-field {
+    @apply block text-sm font-semibold text-ink-700 mb-1.5;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold;
+  }
+  .section-title {
+    @apply font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold text-ink-900 tracking-tight;
+  }
+  .section-subtitle {
+    @apply mt-3 text-base sm:text-lg text-ink-500 max-w-2xl;
+  }
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-amber-600;
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
