@@ -18,13 +18,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const loadProfile = useCallback(async (uid: string) => {
+    // Read the current session so we can preserve an explicitly-set admin role
+    // (adminLogin stores role='admin' in localStorage but the DB row might differ)
+    const { data: { session } } = await api.auth.getSession();
+    const sessionRole = (session?.user as any)?.role as string | undefined;
+
     const { data } = await api
       .from('profiles')
       .select('*')
       .eq('id', uid)
       .maybeSingle();
     if (data) {
-      setUser(data as UserProfile);
+      // If the session was explicitly granted admin/staff, honour that role
+      // even if the DB row hasn't been updated yet.
+      const mergedRole =
+        sessionRole === 'admin' || sessionRole === 'staff'
+          ? sessionRole
+          : (data as any).role;
+      setUser({ ...(data as UserProfile), role: mergedRole as any });
     } else {
       // Create a profile if it doesn't exist yet
       const { data: newProfile } = await api
