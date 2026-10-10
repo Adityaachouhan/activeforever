@@ -415,8 +415,8 @@ app.delete('/api/db/:table', async (req: Request, res: Response) => {
 
 // SPA fallback: all non-API GET requests serve dist/index.html
 if (fs.existsSync(distPath)) {
-  app.get('*', (req: Request, res: Response, next) => {
-    if (req.path.startsWith('/api')) {
+  app.use((req: Request, res: Response, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) {
       return next();
     }
     res.sendFile(path.join(distPath, 'index.html'));
