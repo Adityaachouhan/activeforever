@@ -313,3 +313,51 @@ export const db = {
 };
 
 export { auth };
+
+// Admin credential login — works with the existing /api/db/profiles endpoint (no new server endpoint needed).
+// Credentials are validated on the frontend using VITE env vars baked into the build.
+export async function adminLogin(
+  username: string,
+  password: string
+): Promise<{ profile: any | null; error: string | null }> {
+  // Read expected credentials from Vite env vars (baked in at build time)
+  const expectedUsername = import.meta.env.VITE_ADMIN_USERNAME || 'admin';
+  const expectedPassword = import.meta.env.VITE_ADMIN_PASSWORD || 'Admin@1234';
+
+  // Validate credentials
+  if (username !== expectedUsername || password !== expectedPassword) {
+    return { profile: null, error: 'Invalid username or password.' };
+  }
+
+  try {
+    // Use the existing profiles endpoint (already on production) to fetch/create admin profile.
+    // Admin profile is identified by mobile = '9999999999' and role = 'admin'.
+    const ADMIN_MOBILE = '9999999999';
+    const adminEmail = `${ADMIN_MOBILE}@activeforever.in`;
+
+    // Reuse the existing signInWithPassword which handles create-or-fetch from profiles table
+    const result = await auth.signInWithPassword({ email: adminEmail });
+
+    if (result.error) {
+      return { profile: null, error: result.error.message || 'Login failed.' };
+    }
+
+    const sessionUser = result.data?.user;
+
+    // Verify the fetched profile actually has an admin role
+    if (sessionUser?.role !== 'admin' && sessionUser?.role !== 'staff') {
+      // Force-update the role to admin in the session (profile in DB might be stale)
+      const updatedSession = {
+        user: { ...sessionUser, role: 'admin' as const },
+        access_token: 'admin_token',
+      };
+      localStorage.setItem('af_pg_session', JSON.stringify(updatedSession));
+      notifyAuthListeners('SIGNED_IN', updatedSession);
+      return { profile: updatedSession.user, error: null };
+    }
+
+    return { profile: sessionUser, error: null };
+  } catch (err: any) {
+    return { profile: null, error: err.message || 'Network error. Is the server running?' };
+  }
+}

@@ -74,6 +74,50 @@ function sanitizeValue(col: string, val: any): any {
   return val;
 }
 
+// Admin Credentials (hardcoded — change here to update)
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@1234';
+
+// Admin Login
+app.post('/api/admin/login', async (req: Request, res: Response) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+
+  if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Invalid username or password.' });
+  }
+
+  try {
+    // Fetch or create admin profile in DB
+    let profileResult = await pool.query(
+      `SELECT * FROM "profiles" WHERE "role" = 'admin' LIMIT 1`
+    );
+
+    let adminProfile = profileResult.rows[0];
+
+    if (!adminProfile) {
+      // Create admin profile if it doesn't exist
+      const newId = (await pool.query('SELECT gen_random_uuid() AS id')).rows[0].id;
+      const insertResult = await pool.query(
+        `INSERT INTO "profiles" (id, name, role) VALUES ($1, $2, $3) RETURNING *`,
+        [newId, 'Admin', 'admin']
+      );
+      adminProfile = insertResult.rows[0];
+    }
+
+    return res.json({
+      success: true,
+      profile: adminProfile,
+    });
+  } catch (err: any) {
+    console.error('Admin login error:', err);
+    return res.status(500).json({ error: 'Server error during login.' });
+  }
+});
+
 // Health Check
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
