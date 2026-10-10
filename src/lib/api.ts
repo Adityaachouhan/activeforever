@@ -1,6 +1,8 @@
 // PostgreSQL-backed API client
 // Communicates with the local PostgreSQL Express server via /api/db
 
+import type { UserProfile } from '@/types';
+
 type FilterOp = 'eq' | 'neq';
 
 interface Filter {
@@ -14,9 +16,32 @@ interface InFilter {
   vals: (string | number)[];
 }
 
-const API_BASE_URL = import.meta.env.DEV
+const API_BASE_URL = (import.meta.env.DEV
   ? import.meta.env.VITE_DEV_API_URL
-  : import.meta.env.VITE_PROD_API_URL;
+  : import.meta.env.VITE_PROD_API_URL) || '/api';
+
+async function parseApiResponse(res: Response) {
+  const text = await res.text();
+
+  if (!text) {
+    return { data: null, error: { message: res.statusText || 'Request failed' } };
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { data: null, error: { message: res.statusText || 'Request failed' } };
+  }
+
+  if (trimmed.startsWith('<')) {
+    return { data: null, error: { message: 'API server unavailable. Please try again later.' } };
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return { data: null, error: { message: 'Invalid API response received.' } };
+  }
+}
 
 export class QueryBuilder<T = any> implements PromiseLike<{ data: T | null; error: any; count?: number | null }> {
   private tableName: string;
@@ -121,10 +146,10 @@ export class QueryBuilder<T = any> implements PromiseLike<{ data: T | null; erro
 
         const res = await fetch(`${API_BASE_URL}/db/${this.tableName}?${params.toString()}`);
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-          return { data: null, error: err.error || { message: 'Database request failed' } };
+          const payload = await parseApiResponse(res);
+          return { data: null, error: payload.error || { message: 'Database request failed' } };
         }
-        return await res.json();
+        return await parseApiResponse(res);
       }
 
       if (this.action === 'insert') {
@@ -134,10 +159,10 @@ export class QueryBuilder<T = any> implements PromiseLike<{ data: T | null; erro
           body: JSON.stringify(this.payload),
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-          return { data: null, error: err.error || { message: 'Insert failed' } };
+          const payload = await parseApiResponse(res);
+          return { data: null, error: payload.error || { message: 'Insert failed' } };
         }
-        const result = await res.json();
+        const result = await parseApiResponse(res);
         return result;
       }
 
@@ -151,10 +176,10 @@ export class QueryBuilder<T = any> implements PromiseLike<{ data: T | null; erro
           body: JSON.stringify(this.payload),
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-          return { data: null, error: err.error || { message: 'Update failed' } };
+          const payload = await parseApiResponse(res);
+          return { data: null, error: payload.error || { message: 'Update failed' } };
         }
-        return await res.json();
+        return await parseApiResponse(res);
       }
 
       if (this.action === 'delete') {
@@ -165,10 +190,10 @@ export class QueryBuilder<T = any> implements PromiseLike<{ data: T | null; erro
           method: 'DELETE',
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-          return { data: null, error: err.error || { message: 'Delete failed' } };
+          const payload = await parseApiResponse(res);
+          return { data: null, error: payload.error || { message: 'Delete failed' } };
         }
-        return await res.json();
+        return await parseApiResponse(res);
       }
 
       return { data: null, error: null };
@@ -235,28 +260,36 @@ const auth = {
       .eq('mobile', mobile)
       .maybeSingle();
 
-    let userId = profile?.id;
-    if (!userId) {
+    let userProfile: UserProfile | null = profile as UserProfile | null;
+    if (!userProfile) {
       // Create user profile
       const newId = crypto.randomUUID();
-      await api.from('profiles').insert({
+      const { data: createdProfile } = await api.from('profiles').insert({
         id: newId,
         mobile,
         email,
         name: mobile === '9999999999' ? 'Admin ActiveForever' : `Runner ${mobile.slice(-4)}`,
         role: mobile === '9999999999' ? 'admin' : 'user',
-      });
-      userId = newId;
+      }).select('*').maybeSingle();
+      userProfile = createdProfile as UserProfile | null;
     }
 
+    const sessionUser = {
+      id: userProfile?.id ?? profile?.id,
+      email: userProfile?.email ?? email,
+      role: userProfile?.role ?? (mobile === '9999999999' ? 'admin' : 'user'),
+      name: userProfile?.name ?? '',
+      mobile: userProfile?.mobile ?? mobile,
+    };
+
     const session = {
-      user: { id: userId, email },
+      user: sessionUser,
       access_token: 'pg_local_token',
     };
 
     localStorage.setItem('af_pg_session', JSON.stringify(session));
     notifyAuthListeners('SIGNED_IN', session);
-    return { data: { session, user: session.user }, error: null };
+    return { data: { session, user: sessionUser }, error: null };
   },
 
   async signUp({ email }: { email: string; password?: string }): Promise<{ data: any; error: any }> {
