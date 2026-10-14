@@ -296,6 +296,37 @@ const auth = {
     return this.signInWithPassword({ email });
   },
 
+  setSession(session: any) {
+    if (session) {
+      localStorage.setItem('af_pg_session', JSON.stringify(session));
+      notifyAuthListeners('SIGNED_IN', session);
+    } else {
+      localStorage.removeItem('af_pg_session');
+      notifyAuthListeners('SIGNED_OUT', null);
+    }
+  },
+
+  async verifyFirebaseOtp(idToken: string, name?: string): Promise<{ data: any; error: any }> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, name }),
+      });
+      const result = await parseApiResponse(res);
+      if (!res.ok || result.error) {
+        return { data: null, error: result.error || { message: 'OTP verification failed' } };
+      }
+      if (result.session) {
+        this.setSession(result.session);
+      }
+      return { data: result, error: null };
+    } catch (err: any) {
+      console.error('verifyFirebaseOtp error:', err);
+      return { data: null, error: { message: err.message || 'Network error verifying OTP' } };
+    }
+  },
+
   async signOut() {
     localStorage.removeItem('af_pg_session');
     notifyAuthListeners('SIGNED_OUT', null);

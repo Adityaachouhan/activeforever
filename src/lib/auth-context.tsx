@@ -7,6 +7,8 @@ interface AuthContextValue {
   loading: boolean;
   signInWithOtp: (mobile: string) => Promise<{ error: string | null }>;
   verifyOtp: (mobile: string, otp: string, name?: string) => Promise<{ error: string | null }>;
+  verifyFirebaseOtp: (idToken: string, name?: string) => Promise<{ data: any; error: any }>;
+  setSession: (session: any) => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -87,17 +89,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [loadProfile]);
 
+  const setSession = (session: any) => {
+    api.auth.setSession(session);
+    if (session?.user) {
+      setUser(session.user as UserProfile);
+    } else {
+      setUser(null);
+    }
+  };
+
+  const verifyFirebaseOtp = async (idToken: string, name?: string) => {
+    const res = await api.auth.verifyFirebaseOtp(idToken, name);
+    if (res.data?.session?.user) {
+      await loadProfile(res.data.session.user.id);
+    }
+    return res;
+  };
+
   const signInWithOtp = async (mobile: string) => {
-    // DEV MODE: OTP bypassed — we don't actually send an OTP
-    // In production, this would call an edge function to send OTP via MSG91/Twilio
     return { error: null };
   };
 
   const verifyOtp = async (mobile: string, _otp: string, name?: string) => {
-    // DEV MODE: OTP bypassed — accept any 4-6 digit input
-    // In production, this would verify the OTP via MSG91/Twilio
-
-    // Check if a profile with this mobile already exists
+    // Legacy fallback
     const { data: existingProfile } = await api
       .from('profiles')
       .select('*')
@@ -105,7 +119,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle();
 
     if (existingProfile) {
-      // Sign in — deterministic email based on mobile number
       const email = `${mobile}@activeforever.in`;
       const { error: signInError } = await api.auth.signInWithPassword({
         email,
@@ -113,7 +126,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (signInError) {
-        // Try sign up instead
         const { error: signUpError } = await api.auth.signUp({
           email,
           password: `AF_${mobile}_dev`,
@@ -121,7 +133,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (signUpError) return { error: (signUpError as any)?.message || 'Sign in error' };
       }
 
-      // Update mobile if needed
       await api
         .from('profiles')
         .update({ mobile })
@@ -131,7 +142,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     }
 
-    // New user — create account
     const email = `${mobile}@activeforever.in`;
     const { data: signUpData, error: signUpError } = await api.auth.signUp({
       email,
@@ -169,7 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, signInWithOtp, verifyOtp, signOut, refreshProfile }}
+      value={{ user, loading, signInWithOtp, verifyOtp, verifyFirebaseOtp, setSession, signOut, refreshProfile }}
     >
       {children}
     </AuthContext.Provider>

@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at timestamptz DEFAULT now()
 );
 
+-- Users alias view
+CREATE OR REPLACE VIEW users AS SELECT * FROM profiles;
+
 -- Events table
 CREATE TABLE IF NOT EXISTS events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

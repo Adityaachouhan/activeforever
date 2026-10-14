@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { pool, initDatabase } from './db.js';
+import { verifyFirebaseIdToken } from './firebase-admin.js';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ if (fs.existsSync(distPath)) {
 // Whitelist allowed tables to prevent arbitrary table access
 const ALLOWED_TABLES = new Set([
   'profiles',
+  'users',
   'events',
   'event_categories',
   'registrations',
@@ -130,6 +132,94 @@ app.post('/api/admin/login', async (req: Request, res: Response) => {
   }
 });
 
+// Firebase Phone OTP Verification & PostgreSQL Session Completion
+app.post('/api/auth/verify-otp', async (req: Request, res: Response) => {
+  const { idToken, name } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ error: { message: 'Missing Firebase idToken in request.' } });
+  }
+
+  try {
+    // 1. Verify the Firebase ID Token using firebase-admin
+    const decodedToken = await verifyFirebaseIdToken(idToken);
+    const firebaseUid = decodedToken.uid;
+    const fullPhone = decodedToken.phone_number || '';
+
+    if (!fullPhone) {
+      return res.status(400).json({
+        error: { message: 'The verified token does not contain a phone number.' }
+      });
+    }
+
+    // Normalize phone number to 10 digits for Indian numbers (e.g. +919876543210 -> 9876543210)
+    const normalizedMobile = fullPhone.replace(/^\+91/, '').replace(/\D/g, '').slice(-10);
+
+    // 2. Query PostgreSQL to check if user exists in the profiles/users table
+    const existingResult = await pool.query(
+      `SELECT * FROM "profiles" WHERE "mobile" = $1 OR "mobile" = $2 LIMIT 1`,
+      [normalizedMobile, fullPhone]
+    );
+
+    let userProfile = existingResult.rows[0];
+
+    if (userProfile) {
+      // User exists. Update name if user provided a name and existing name is blank or default
+      const trimmedName = typeof name === 'string' ? name.trim() : '';
+      if (trimmedName && (!userProfile.name || userProfile.name.startsWith('Runner '))) {
+        const updateResult = await pool.query(
+          `UPDATE "profiles" SET "name" = $1 WHERE "id" = $2 RETURNING *`,
+          [trimmedName, userProfile.id]
+        );
+        userProfile = updateResult.rows[0];
+      }
+    } else {
+      // 3. Register new user in PostgreSQL
+      const trimmedName = typeof name === 'string' && name.trim() ? name.trim() : `Runner ${normalizedMobile.slice(-4)}`;
+      const userEmail = decodedToken.email || `${normalizedMobile}@activeforever.in`;
+      const role = normalizedMobile === '9999999999' ? 'admin' : 'user';
+
+      const insertResult = await pool.query(
+        `INSERT INTO "profiles" (id, name, mobile, email, role)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4)
+         RETURNING *`,
+        [trimmedName, normalizedMobile, userEmail, role]
+      );
+      userProfile = insertResult.rows[0];
+    }
+
+    // 4. Complete session payload
+    const sessionUser = {
+      id: userProfile.id,
+      name: userProfile.name,
+      email: userProfile.email,
+      mobile: userProfile.mobile,
+      role: userProfile.role,
+    };
+
+    const session = {
+      user: sessionUser,
+      access_token: idToken,
+      firebase_uid: firebaseUid,
+    };
+
+    return res.json({
+      success: true,
+      user: userProfile,
+      session,
+      isNewUser: !existingResult.rows[0],
+    });
+  } catch (err: any) {
+    console.error('Error in /api/auth/verify-otp:', err);
+    return res.status(401).json({
+      error: {
+        message: err.message || 'Firebase token verification failed.',
+        code: err.code || 'AUTH_VERIFICATION_FAILED',
+      },
+    });
+  }
+});
+
 // Health Check
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
@@ -142,10 +232,12 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
 // Dynamic Query / Table API (serves all frontend data hooks)
 app.get('/api/db/:table', async (req: Request, res: Response) => {
-  const { table } = req.params;
-  if (!ALLOWED_TABLES.has(table)) {
+  const rawTable = req.params.table;
+  const table = Array.isArray(rawTable) ? rawTable[0] : rawTable;
+  if (!table || !ALLOWED_TABLES.has(table)) {
     return res.status(400).json({ error: `Invalid table: ${table}` });
   }
+  const targetTable = table === 'users' ? 'profiles' : table;
 
   try {
     const select = (req.query.select as string) || '*';
@@ -228,7 +320,7 @@ app.get('/api/db/:table', async (req: Request, res: Response) => {
     // If head request (count only)
     if (isHead) {
       const countRes = await pool.query(
-        `SELECT COUNT(*)::int AS count FROM "${table}" ${whereSQL}`,
+        `SELECT COUNT(*)::int AS count FROM "${targetTable}" ${whereSQL}`,
         values
       );
       return res.json({ data: null, count: countRes.rows[0].count, error: null });
@@ -251,13 +343,13 @@ app.get('/api/db/:table', async (req: Request, res: Response) => {
     // Columns
     const selectCols = select === '*' ? '*' : select.split(',').map(c => `"${c.trim()}"`).join(', ');
 
-    const sql = `SELECT ${selectCols} FROM "${table}" ${whereSQL} ${orderSQL} ${limitSQL}`;
+    const sql = `SELECT ${selectCols} FROM "${targetTable}" ${whereSQL} ${orderSQL} ${limitSQL}`;
     const result = await pool.query(sql, values);
 
     let count: number | null = null;
     if (isExactCount) {
       const countRes = await pool.query(
-        `SELECT COUNT(*)::int AS count FROM "${table}" ${whereSQL}`,
+        `SELECT COUNT(*)::int AS count FROM "${targetTable}" ${whereSQL}`,
         values
       );
       count = countRes.rows[0].count;
@@ -277,10 +369,12 @@ app.get('/api/db/:table', async (req: Request, res: Response) => {
 
 // Insert into table (with automatic upsert support if ID is provided)
 app.post('/api/db/:table', async (req: Request, res: Response) => {
-  const { table } = req.params;
-  if (!ALLOWED_TABLES.has(table)) {
+  const rawTable = req.params.table;
+  const table = Array.isArray(rawTable) ? rawTable[0] : rawTable;
+  if (!table || !ALLOWED_TABLES.has(table)) {
     return res.status(400).json({ error: `Invalid table: ${table}` });
   }
+  const targetTable = table === 'users' ? 'profiles' : table;
 
   try {
     const payload = req.body;
@@ -312,19 +406,19 @@ app.post('/api/db/:table', async (req: Request, res: Response) => {
         const updateCols = keys.filter(k => k !== 'id');
         if (updateCols.length > 0) {
           const updateSet = updateCols.map(k => `"${k}" = EXCLUDED."${k}"`).join(', ');
-          sql = `INSERT INTO "${table}" (${cols}) VALUES (${placeholders}) ON CONFLICT ("id") DO UPDATE SET ${updateSet} RETURNING *`;
+          sql = `INSERT INTO "${targetTable}" (${cols}) VALUES (${placeholders}) ON CONFLICT ("id") DO UPDATE SET ${updateSet} RETURNING *`;
         } else {
-          sql = `INSERT INTO "${table}" (${cols}) VALUES (${placeholders}) ON CONFLICT ("id") DO NOTHING RETURNING *`;
+          sql = `INSERT INTO "${targetTable}" (${cols}) VALUES (${placeholders}) ON CONFLICT ("id") DO NOTHING RETURNING *`;
         }
       } else {
-        sql = `INSERT INTO "${table}" (${cols}) VALUES (${placeholders}) RETURNING *`;
+        sql = `INSERT INTO "${targetTable}" (${cols}) VALUES (${placeholders}) RETURNING *`;
       }
 
       const result = await pool.query(sql, vals);
       if (result.rows.length > 0) {
         insertedRows.push(result.rows[0]);
       } else {
-        const existing = await pool.query(`SELECT * FROM "${table}" WHERE "id" = $1`, [row.id]);
+        const existing = await pool.query(`SELECT * FROM "${targetTable}" WHERE "id" = $1`, [row.id]);
         if (existing.rows.length > 0) insertedRows.push(existing.rows[0]);
       }
     }
@@ -338,10 +432,12 @@ app.post('/api/db/:table', async (req: Request, res: Response) => {
 
 // Update rows in table
 app.patch('/api/db/:table', async (req: Request, res: Response) => {
-  const { table } = req.params;
-  if (!ALLOWED_TABLES.has(table)) {
+  const rawTable = req.params.table;
+  const table = Array.isArray(rawTable) ? rawTable[0] : rawTable;
+  if (!table || !ALLOWED_TABLES.has(table)) {
     return res.status(400).json({ error: `Invalid table: ${table}` });
   }
+  const targetTable = table === 'users' ? 'profiles' : table;
 
   try {
     const payload = req.body;
@@ -370,7 +466,7 @@ app.patch('/api/db/:table', async (req: Request, res: Response) => {
     const values = keys.map(k => sanitizeValue(k, payload[k]));
     values.push(filterVal);
 
-    const sql = `UPDATE "${table}" SET ${setClauses} WHERE "${col}" = $${values.length} RETURNING *`;
+    const sql = `UPDATE "${targetTable}" SET ${setClauses} WHERE "${col}" = $${values.length} RETURNING *`;
     const result = await pool.query(sql, values);
 
     return res.json({ data: result.rows, error: null });
@@ -382,10 +478,12 @@ app.patch('/api/db/:table', async (req: Request, res: Response) => {
 
 // Delete from table
 app.delete('/api/db/:table', async (req: Request, res: Response) => {
-  const { table } = req.params;
-  if (!ALLOWED_TABLES.has(table)) {
+  const rawTable = req.params.table;
+  const table = Array.isArray(rawTable) ? rawTable[0] : rawTable;
+  if (!table || !ALLOWED_TABLES.has(table)) {
     return res.status(400).json({ error: `Invalid table: ${table}` });
   }
+  const targetTable = table === 'users' ? 'profiles' : table;
 
   try {
     const filterParam = req.query.filter as string;
@@ -403,7 +501,7 @@ app.delete('/api/db/:table', async (req: Request, res: Response) => {
     }
 
     const filterVal = sanitizeValue(col, rawVal);
-    const sql = `DELETE FROM "${table}" WHERE "${col}" = $1 RETURNING *`;
+    const sql = `DELETE FROM "${targetTable}" WHERE "${col}" = $1 RETURNING *`;
     const result = await pool.query(sql, [filterVal]);
 
     return res.json({ data: result.rows, error: null });
