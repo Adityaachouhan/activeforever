@@ -23,8 +23,32 @@ export function getFirebaseAdmin(): { app: App; auth: Auth } {
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID || 'activeforeverindia-87d4f';
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
   const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
 
+  // 1. Direct environment variables (Best for .env configurations)
+  if (clientEmail && privateKey) {
+    try {
+      // Normalize escaped newlines if passed as single-line string in .env
+      const formattedKey = privateKey.replace(/\\n/g, '\n');
+      adminApp = initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey: formattedKey,
+        }),
+        projectId,
+      });
+      adminAuth = getAuth(adminApp);
+      console.log('[Firebase Admin] Initialized with Client Email & Private Key for project:', projectId);
+      return { app: adminApp, auth: adminAuth };
+    } catch (err) {
+      console.error('[Firebase Admin] Error initializing with client email & private key:', err);
+    }
+  }
+
+  // 2. Service Account Key file or JSON string
   if (serviceAccountKey) {
     try {
       let credentials: any;
