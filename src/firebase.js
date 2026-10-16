@@ -3,7 +3,7 @@ import { getAuth } from "firebase/auth";
 
 // Aapke activeforeverindia project ki settings
 const firebaseConfig = {
-  apiKey: "AIzaSyAcm6BSVzzLh8ObwoBXXnMmpMI-w-0qVq4",
+  apiKey: "AIzaSyACm6BSVZzLh8OBwoBXXnMmpMI-w-0qVq4",
   authDomain: "activeforeverindia-87d4f.firebaseapp.com",
   projectId: "activeforeverindia-87d4f",
   storageBucket: "activeforeverindia-87d4f.firebasestorage.app",
